@@ -1,0 +1,164 @@
+#!/usr/bin/env bash
+
+# shadow-mirror: The CLI engine for Jungian shadow integration
+# Adheres to the "Constraint-to-Catalyst" philosophy for low-bandwidth operation.
+
+set -euo pipefail
+
+# --- CONFIGURATION ---
+CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/shadow_mirror"
+AUDIO_DIR="${CONFIG_DIR}/audio"
+RAW_DIR="${CONFIG_DIR}/raw"
+SYNTH_DIR="${CONFIG_DIR}/synthesis"
+LOGS_DIR="${CONFIG_DIR}/logs"
+DATA_DIR="${CONFIG_DIR}/data"
+
+# Ensure directories exist
+mkdir -p "${AUDIO_DIR}" "${RAW_DIR}" "${SYNTH_DIR}" "${LOGS_DIR}" "${DATA_DIR}"
+
+# --- HELPER FUNCTIONS ---
+
+get_energy_state() {
+    echo "🪞 Spoons Check. [1] Green [2] Yellow [3] Red"
+    
+    local state=""
+    while [[ ! "$state" =~ ^[1-3]$ ]]; do
+        read -r -n 1 -p "> " state
+        echo "" # new line after raw input
+    done
+    
+    # Export state so it can be passed to python logger
+    case "$state" in
+        1) export SPOONS="Green" ;;
+        2) export SPOONS="Yellow" ;;
+        3) export SPOONS="Red" ;;
+    esac
+}
+
+print_usage() {
+    echo ""
+    echo "Shadow Mirror 🪞"
+    echo "An AI-mediated cognitive prosthesis for shadow integration."
+    echo "Zero judgment. Zero pressure."
+    echo ""
+    echo "Usage:"
+    echo "  shadow-mirror --entry    # Paste a raw thought via Superwhisper"
+    echo "  shadow-mirror --review   # Search and review past entries"
+    echo "  shadow-mirror --help     # Show this screen"
+    echo ""
+}
+
+log_telemetry() {
+    local action="$1"
+    local timestamp=$(date +%Y%m%d_%H%M%S)
+    echo "${timestamp},${action}" >> "${LOGS_DIR}/telemetry.csv"
+}
+
+# The Fog Test constraint: Must be executable and stop with a single keystroke.
+record_entry() {
+    get_energy_state
+    
+    local timestamp=$(date +%Y%m%d_%H%M%S)
+    local raw_file="${RAW_DIR}/entry_${timestamp}.txt"
+    
+    echo ""
+    echo "🪞 Shadow Mirror is listening..."
+    echo "(Trigger Superwhisper via Option + Space, speak, then press Ctrl+D when finished)"
+    
+    # Read all input until EOF (Ctrl+D) and save it directly to the raw text file
+    cat > "$raw_file"
+    
+    if [[ ! -s "$raw_file" ]]; then
+        echo ""
+        echo "No input received. Discarding entry."
+        rm -f "$raw_file"
+        return
+    fi
+    
+    echo "" # newline after Ctrl+D
+    
+    if [[ "$SPOONS" == "Red" ]]; then
+        echo "Entry secured. Rest now."
+    else
+        echo "Entry saved. Processing..."
+    fi
+    
+    log_telemetry "entry_recorded"
+    
+    # Hand off to Python script for LLM synthesis.
+    local TRUE_SCRIPT_PATH
+    if command -v readlink >/dev/null 2>&1; then
+        TRUE_SCRIPT_PATH=$(readlink -f "${BASH_SOURCE[0]}")
+    else
+        TRUE_SCRIPT_PATH="${BASH_SOURCE[0]}" # Fallback for old macOS without GNU readlink
+    fi
+    
+    SCRIPT_DIR="$(cd "$(dirname "$TRUE_SCRIPT_PATH")/../scripts" && pwd)"
+    VENV_PYTHON="$(cd "$(dirname "$TRUE_SCRIPT_PATH")/../venv/bin" && pwd)/python"
+    
+    nohup "$VENV_PYTHON" "${SCRIPT_DIR}/process.py" "$timestamp" "$SPOONS" >> "${LOGS_DIR}/process.log" 2>&1 &
+}
+
+# The Fog Test constraint: Must be simple, fast, and high-contrast
+review_entries() {
+    get_energy_state
+    
+    if [[ "$SPOONS" == "Red" ]]; then
+        echo "🛑 Access Denied: Rest is required today."
+        return
+    elif [[ "$SPOONS" == "Yellow" ]]; then
+        echo "⚠️ Warning: Limited synthesis insights shown to prevent overload."
+        read -n 1 -s -r -p "Press any key to continue..."
+        echo ""
+    fi
+    
+    log_telemetry "review_accessed"
+
+    local md_files=$(find "$SYNTH_DIR" -type f -name "*.md" 2>/dev/null)
+    if [[ -z "$md_files" ]]; then
+        echo "No synthesis entries yet."
+        return
+    fi
+    
+    # Check if bat is installed for syntax highlighted previews, otherwise fallback to cat
+    local preview_cmd="cat {}"
+    if command -v bat &> /dev/null; then
+        preview_cmd="bat --color=always --style=plain {}"
+    fi
+    
+    # Use fzf to select a file based on file contents (pattern recognition)
+    # The preview window shows the full synthesis on the right
+    local selected_file=$(find "$SYNTH_DIR" -type f -name "*.md" | \
+        fzf --preview "$preview_cmd" \
+            --preview-window=right:70%:wrap \
+            --prompt="Search Triggers/Patterns > " \
+            --bind "enter:accept" \
+            --bind "esc:abort")
+            
+    if [[ -n "$selected_file" ]]; then
+        # If the user selects a file, open it in their preferred editor, or fallback to less
+        ${EDITOR:-less} "$selected_file"
+    fi
+}
+
+if [[ $# -eq 0 ]]; then
+    print_usage
+    exit 0
+fi
+
+case "$1" in
+    --entry|-e)
+        record_entry
+        ;;
+    --review|-r)
+        review_entries
+        ;;
+    --help|-h)
+        print_usage
+        ;;
+    *)
+        echo "Unknown option: $1"
+        print_usage
+        exit 1
+        ;;
+esac
