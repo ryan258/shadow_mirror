@@ -44,8 +44,76 @@ print_usage() {
     echo "Usage:"
     echo "  shadow-mirror --entry    # Paste a raw thought via Superwhisper"
     echo "  shadow-mirror --review   # Search and review past entries"
+    echo "  shadow-mirror --status   # See what is mirrored or waiting"
+    echo "  shadow-mirror --retry    # Re-mirror entries that need another pass"
     echo "  shadow-mirror --help     # Show this screen"
     echo ""
+}
+
+notify_failed_entries() {
+    local failed_count
+    failed_count=$(find "$LOGS_DIR" -maxdepth 1 -type f -name "failed_*" -print 2>/dev/null | wc -l | tr -d ' ')
+
+    if [[ "$failed_count" -eq 1 ]]; then
+        echo "1 earlier entry is waiting to be re-mirrored. Run: shadow-mirror --retry"
+    elif [[ "$failed_count" -gt 1 ]]; then
+        echo "$failed_count earlier entries are waiting to be re-mirrored. Run: shadow-mirror --retry"
+    fi
+}
+
+show_status() {
+    local processed pending failed raw_file timestamp
+    processed=$(find "$SYNTH_DIR" -maxdepth 1 -type f -name "entry_*.md" -print 2>/dev/null | wc -l | tr -d ' ')
+    failed=$(find "$LOGS_DIR" -maxdepth 1 -type f -name "failed_*" -print 2>/dev/null | wc -l | tr -d ' ')
+    pending=0
+
+    for raw_file in "$RAW_DIR"/entry_*.txt; do
+        [[ -e "$raw_file" ]] || continue
+        timestamp="${raw_file##*/entry_}"
+        timestamp="${timestamp%.txt}"
+        if [[ ! -f "$SYNTH_DIR/entry_${timestamp}.md" && ! -f "$LOGS_DIR/failed_${timestamp}" ]]; then
+            pending=$((pending + 1))
+        fi
+    done
+
+    echo "$processed mirrored, $pending still processing, $failed waiting to be re-mirrored."
+}
+
+launch_processing() {
+    local timestamp="$1"
+    local spoons="$2"
+    local true_script_path script_dir venv_python
+
+    if command -v readlink >/dev/null 2>&1; then
+        true_script_path=$(readlink -f "${BASH_SOURCE[0]}")
+    else
+        true_script_path="${BASH_SOURCE[0]}"
+    fi
+
+    script_dir="$(cd "$(dirname "$true_script_path")/../scripts" && pwd)"
+    venv_python="$(cd "$(dirname "$true_script_path")/../venv/bin" && pwd)/python"
+    nohup "$venv_python" "$script_dir/process.py" "$timestamp" "$spoons" >> "$LOGS_DIR/process.log" 2>&1 &
+}
+
+retry_failed_entries() {
+    local marker timestamp
+    local markers=("$LOGS_DIR"/failed_*)
+
+    if [[ ! -e "${markers[0]}" ]]; then
+        echo "Nothing is waiting to be re-mirrored."
+        return
+    fi
+
+    for marker in "${markers[@]}"; do
+        timestamp="${marker##*/failed_}"
+        launch_processing "$timestamp" "Yellow"
+    done
+
+    if [[ ${#markers[@]} -eq 1 ]]; then
+        echo "Re-mirroring 1 earlier entry."
+    else
+        echo "Re-mirroring ${#markers[@]} earlier entries."
+    fi
 }
 
 log_telemetry() {
@@ -56,6 +124,7 @@ log_telemetry() {
 
 # The Fog Test constraint: Must be executable and stop with a single keystroke.
 record_entry() {
+    notify_failed_entries
     get_energy_state
     
     local timestamp=$(date +%Y%m%d_%H%M%S)
@@ -85,18 +154,7 @@ record_entry() {
     
     log_telemetry "entry_recorded"
     
-    # Hand off to Python script for LLM synthesis.
-    local TRUE_SCRIPT_PATH
-    if command -v readlink >/dev/null 2>&1; then
-        TRUE_SCRIPT_PATH=$(readlink -f "${BASH_SOURCE[0]}")
-    else
-        TRUE_SCRIPT_PATH="${BASH_SOURCE[0]}" # Fallback for old macOS without GNU readlink
-    fi
-    
-    SCRIPT_DIR="$(cd "$(dirname "$TRUE_SCRIPT_PATH")/../scripts" && pwd)"
-    VENV_PYTHON="$(cd "$(dirname "$TRUE_SCRIPT_PATH")/../venv/bin" && pwd)/python"
-    
-    nohup "$VENV_PYTHON" "${SCRIPT_DIR}/process.py" "$timestamp" "$SPOONS" >> "${LOGS_DIR}/process.log" 2>&1 &
+    launch_processing "$timestamp" "$SPOONS"
 }
 
 # The Fog Test constraint: Must be simple, fast, and high-contrast
@@ -104,7 +162,7 @@ review_entries() {
     get_energy_state
     
     if [[ "$SPOONS" == "Red" ]]; then
-        echo "🛑 Access Denied: Rest is required today."
+        echo "🪞 The mirror is holding everything safely. It will be here when you're rested."
         return
     elif [[ "$SPOONS" == "Yellow" ]]; then
         echo "⚠️ Warning: Limited synthesis insights shown to prevent overload."
@@ -152,6 +210,12 @@ case "$1" in
         ;;
     --review|-r)
         review_entries
+        ;;
+    --status|-s)
+        show_status
+        ;;
+    --retry)
+        retry_failed_entries
         ;;
     --help|-h)
         print_usage
