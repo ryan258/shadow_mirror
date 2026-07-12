@@ -14,7 +14,7 @@ It solves a critical gap in psychological care: traditional therapy and deep int
 
 **The Solution:** Shadow Mirror acts as a collaborative cognitive prosthesis for psychological growth.
 
-- **Voice-First, Fog-Optimized Input:** Bypasses the resistance and fine-motor requirements of typing. Captures raw, fragmented audio dumps via terminal commands.
+- **Voice-First, Fog-Optimized Input:** Bypasses the resistance and fine-motor requirements of typing. Accepts raw, fragmented thought dumps from OS-level dictation such as Superwhisper.
 - **Hegelian Dialectic Engine:** The Python/Bash processing pipeline structures raw input into Thesis (the trigger/emotion), Antithesis (the shadow element/projection), and Synthesis (the integration).
 - **Asynchronous Mirroring:** Users do not need to process insights immediately. The system generates markdown files locally, holding the synthesized insights safely until the user has the "Spoons" (energy) to review them.
 
@@ -50,7 +50,7 @@ Every feature merged into Shadow Mirror MUST adhere to these constraints:
 Based on the existing specification, the 12-week MVP targets the following sequence:
 
 - **Week 1-2: Core Scaffolding.** Set up the `~/.config/shadow_mirror` directory structure and flat-file schema.
-- **Week 3-5: The Voice Pipeline.** Implement high-fidelity audio transcription in Bash using `ffmpeg` and the Whisper API.
+- **Week 3-5: The Voice Pipeline.** Integrate OS-level dictation through stdin so capture stays outside the terminal tool.
 - **Week 6-8: The Mirroring Logic.** Prompt engineering and python API wrappers to perform the Hegelian Synthesis.
 - **Week 9-11: Energy-Gated CLI.** Build the bash logic that adjusts `$stdout` density based on the user's declared energy level.
 - **Week 12: Daily Use Validation.** Dogfood the tool daily to refine the frictionless workflow.

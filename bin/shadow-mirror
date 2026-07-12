@@ -7,14 +7,13 @@ set -euo pipefail
 
 # --- CONFIGURATION ---
 CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/shadow_mirror"
-AUDIO_DIR="${CONFIG_DIR}/audio"
 RAW_DIR="${CONFIG_DIR}/raw"
 SYNTH_DIR="${CONFIG_DIR}/synthesis"
 LOGS_DIR="${CONFIG_DIR}/logs"
 DATA_DIR="${CONFIG_DIR}/data"
 
 # Ensure directories exist
-mkdir -p "${AUDIO_DIR}" "${RAW_DIR}" "${SYNTH_DIR}" "${LOGS_DIR}" "${DATA_DIR}"
+mkdir -p "${RAW_DIR}" "${SYNTH_DIR}" "${LOGS_DIR}" "${DATA_DIR}"
 
 # --- HELPER FUNCTIONS ---
 
@@ -44,6 +43,7 @@ print_usage() {
     echo "Usage:"
     echo "  shadow-mirror --entry    # Paste a raw thought via Superwhisper"
     echo "  shadow-mirror --review   # Search and review past entries"
+    echo "  shadow-mirror --patterns # Name recurring themes on a Green day"
     echo "  shadow-mirror --status   # See what is mirrored or waiting"
     echo "  shadow-mirror --retry    # Re-mirror entries that need another pass"
     echo "  shadow-mirror --help     # Show this screen"
@@ -82,17 +82,25 @@ show_status() {
 launch_processing() {
     local timestamp="$1"
     local spoons="$2"
-    local true_script_path script_dir venv_python
+    local bin_dir script_dir venv_python
 
-    if command -v readlink >/dev/null 2>&1; then
-        true_script_path=$(readlink -f "${BASH_SOURCE[0]}")
-    else
-        true_script_path="${BASH_SOURCE[0]}"
-    fi
-
-    script_dir="$(cd "$(dirname "$true_script_path")/../scripts" && pwd)"
-    venv_python="$(cd "$(dirname "$true_script_path")/../venv/bin" && pwd)/python"
+    bin_dir="$(script_directory)"
+    script_dir="${bin_dir}/../scripts"
+    venv_python="${bin_dir}/../venv/bin/python"
     nohup "$venv_python" "$script_dir/process.py" "$timestamp" "$spoons" >> "$LOGS_DIR/process.log" 2>&1 &
+}
+
+script_directory() {
+    local source="${BASH_SOURCE[0]}"
+    local source_dir
+
+    while [[ -h "$source" ]]; do
+        source_dir="$(cd -P "$(dirname "$source")" && pwd)"
+        source="$(readlink "$source")"
+        [[ "$source" == /* ]] || source="${source_dir}/${source}"
+    done
+
+    cd -P "$(dirname "$source")" && pwd
 }
 
 retry_failed_entries() {
@@ -116,10 +124,30 @@ retry_failed_entries() {
     fi
 }
 
+show_patterns() {
+    get_energy_state
+
+    if [[ "$SPOONS" != "Green" ]]; then
+        echo "🪞 The mirror is holding everything safely. Patterns will be here when you have more room."
+        return
+    fi
+
+    local bin_dir script_dir venv_python
+    bin_dir="$(script_directory)"
+    script_dir="${bin_dir}/../scripts"
+    venv_python="${bin_dir}/../venv/bin/python"
+    "$venv_python" "$script_dir/process.py" --patterns
+}
+
 log_telemetry() {
     local action="$1"
-    local timestamp=$(date +%Y%m%d_%H%M%S)
-    echo "${timestamp},${action}" >> "${LOGS_DIR}/telemetry.csv"
+    local timestamp
+    local telemetry_file="${LOGS_DIR}/telemetry.csv"
+    timestamp=$(date +%Y%m%d_%H%M%S)
+    if [[ ! -f "$telemetry_file" ]]; then
+        echo "timestamp,action" > "$telemetry_file"
+    fi
+    echo "${timestamp},${action}" >> "$telemetry_file"
 }
 
 # The Fog Test constraint: Must be executable and stop with a single keystroke.
@@ -127,15 +155,19 @@ record_entry() {
     notify_failed_entries
     get_energy_state
     
-    local timestamp=$(date +%Y%m%d_%H%M%S)
+    local timestamp
+    timestamp=$(date +%Y%m%d_%H%M%S)
     local raw_file="${RAW_DIR}/entry_${timestamp}.txt"
+    local capture_interrupted=0
     
     echo ""
     echo "🪞 Shadow Mirror is listening..."
     echo "(Trigger Superwhisper via Option + Space, speak, then press Ctrl+D when finished)"
     
     # Read all input until EOF (Ctrl+D) and save it directly to the raw text file
-    cat > "$raw_file"
+    trap 'capture_interrupted=1' INT
+    cat > "$raw_file" || true
+    trap - INT
     
     if [[ ! -s "$raw_file" ]]; then
         echo ""
@@ -145,6 +177,10 @@ record_entry() {
     fi
     
     echo "" # newline after Ctrl+D
+
+    if [[ "$capture_interrupted" -eq 1 ]]; then
+        echo "Entry saved as-is."
+    fi
     
     if [[ "$SPOONS" == "Red" ]]; then
         echo "Entry secured. Rest now."
@@ -172,12 +208,23 @@ review_entries() {
     
     log_telemetry "review_accessed"
 
-    local md_files=$(find "$SYNTH_DIR" -type f -name "*.md" 2>/dev/null)
+    local md_files
+    md_files=$(find "$SYNTH_DIR" -type f -name "*.md" 2>/dev/null)
     if [[ -z "$md_files" ]]; then
         echo "No synthesis entries yet."
         return
     fi
     
+    local selected_file
+
+    if ! command -v fzf >/dev/null 2>&1; then
+        selected_file=$(find "$SYNTH_DIR" -type f -name "*.md" -print0 | xargs -0 ls -t 2>/dev/null | head -n 1)
+        if [[ -n "$selected_file" ]]; then
+            ${PAGER:-less} "$selected_file"
+        fi
+        return
+    fi
+
     # Check if bat is installed for syntax highlighted previews, otherwise fallback to cat
     local preview_cmd="cat {}"
     if command -v bat &> /dev/null; then
@@ -186,12 +233,12 @@ review_entries() {
     
     # Use fzf to select a file based on file contents (pattern recognition)
     # The preview window shows the full synthesis on the right
-    local selected_file=$(find "$SYNTH_DIR" -type f -name "*.md" | \
+    selected_file=$(find "$SYNTH_DIR" -type f -name "*.md" | \
         fzf --preview "$preview_cmd" \
             --preview-window=right:70%:wrap \
             --prompt="Search Triggers/Patterns > " \
             --bind "enter:accept" \
-            --bind "esc:abort")
+            --bind "esc:abort" || true)
             
     if [[ -n "$selected_file" ]]; then
         # If the user selects a file, open it in their preferred editor, or fallback to less
@@ -210,6 +257,9 @@ case "$1" in
         ;;
     --review|-r)
         review_entries
+        ;;
+    --patterns|-p)
+        show_patterns
         ;;
     --status|-s)
         show_status
