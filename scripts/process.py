@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 DEFAULT_BASE_URL = "https://openrouter.ai/api/v1"
 PROMPT_TEMPLATE = Path(__file__).resolve().parent.parent / "prompts" / "synthesis.md"
 TRIGGER_SUMMARY_PATTERN = re.compile(
-    r"^\s*(?:[#*]\s*)*TRIGGER\\?_SUMMARY[\s*]*:\s*(.+?)\s*$", re.IGNORECASE
+    r"^\s*[#*_\s]*TRIGGER\\?_SUMMARY[#*_\s]*:\s*(.+?)\s*$", re.IGNORECASE
 )
 
 
@@ -57,6 +57,7 @@ def show_patterns():
     if not api_key:
         print("Error: OPENROUTER_API_KEY not found.")
         return 1
+
 
     try:
         with open(csv_file, newline="") as f:

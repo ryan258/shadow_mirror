@@ -20,10 +20,12 @@
 - Script resolution now works through a symlinked installation without GNU `readlink`.
 - Review remains functional without `fzf` by opening the newest synthesis in `$PAGER`.
 - Ctrl+C during capture preserves and processes a partial thought.
-- Markdown-wrapped `TRIGGER_SUMMARY` lines now populate trigger history correctly.
+- Markdown-wrapped and backslash-escaped `TRIGGER_SUMMARY` lines now populate trigger history correctly.
+- Surfacing patterns via `--patterns` now handles missing trigger history files gracefully.
 - `telemetry.csv` now receives a header row.
 
 ### Changed
 
 - Red-day review now reassures the operator that the mirror is holding everything safely instead of denying access.
 - Removed unused direct-audio scaffolding and documented OS-level dictation as the capture path.
+- Added comprehensive test coverage for various trigger summary markdown formats.

@@ -106,6 +106,53 @@ class ProcessTests(unittest.TestCase):
 
             self.assertEqual(output.getvalue().strip(), "No trigger history yet.")
 
+    def test_various_trigger_summary_formats(self):
+        content_formats = [
+            ("TRIGGER_SUMMARY: Work fear", "Work fear"),
+            ("**TRIGGER_SUMMARY:** **Work fear**", "Work fear"),
+            ("**TRIGGER_SUMMARY**: Work fear", "Work fear"),
+            ("### **TRIGGER_SUMMARY:** Work fear", "Work fear"),
+            ("  * TRIGGER_SUMMARY : Work fear ", "Work fear"),
+            ("TRIGGER_SUMMARY: **Work fear**", "Work fear"),
+            ("TRIGGER\\_SUMMARY: Work fear", "Work fear"),
+            ("**TRIGGER\\_SUMMARY**: Work fear", "Work fear"),
+        ]
+
+        for text, expected in content_formats:
+            with tempfile.TemporaryDirectory() as temp_dir:
+                config_dir = Path(temp_dir) / "shadow_mirror"
+                raw_dir = config_dir / "raw"
+                raw_dir.mkdir(parents=True)
+                timestamp = "20260711_150000"
+                (raw_dir / f"entry_{timestamp}.txt").write_text("I am worried about work.")
+
+                class CustomCompletions:
+                    def create(self, **kwargs):
+                        return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=f"{text}\n\n## Thesis\nContent"))])
+
+                class CustomOpenAI:
+                    def __init__(self, **kwargs):
+                        self.chat = SimpleNamespace(completions=CustomCompletions())
+
+                old_env = os.environ.copy()
+                old_argv = sys.argv
+                old_client = process.OpenAI
+                try:
+                    os.environ["XDG_CONFIG_HOME"] = temp_dir
+                    os.environ["OPENROUTER_API_KEY"] = "test"
+                    process.OpenAI = CustomOpenAI
+                    sys.argv = ["process.py", timestamp, "Yellow"]
+                    process.main()
+                finally:
+                    process.OpenAI = old_client
+                    sys.argv = old_argv
+                    os.environ.clear()
+                    os.environ.update(old_env)
+
+                with (config_dir / "data" / "entries.csv").open(newline="") as f:
+                    rows = list(csv.DictReader(f))
+                self.assertEqual(rows[-1]["trigger_summary"], expected)
+
 
 if __name__ == "__main__":
     unittest.main()
