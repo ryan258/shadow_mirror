@@ -8,29 +8,25 @@
 
 ## BLUF
 
-The tool works, but it has one dangerous gap (silent background failures), one broken promise (pattern recognition is documented but not implemented), and zero onboarding path for anyone who isn't the original author. Fixing those three things — plus a handful of small hardening items — turns this from a personal script into a credible reference implementation of "constraint-driven AI tooling" that AI professionals can install, trust, and learn from.
+The first trust-and-core sitting is shipped: background failures are visible and retryable, API calls are bounded, past triggers inform syntheses, and the Red-day gate is consistent with Zero Judgment. The remaining proposals are intentionally deferred until they earn their complexity.
 
 Priority order: **P0 = bugs/trust, P1 = the missing core feature, P2 = adoption & professional polish, P3 = optional depth.**
 
 ---
 
+## Completed
+
+- [x] **0.1 Silent background failure** — failure markers, `--status`, and a calm entry-time notice.
+- [x] **0.2 No retry path for failed syntheses** — background `--retry` command.
+- [x] **0.6 No timeout on the API call** — 120-second timeout with two retries.
+- [x] **1.1 Cross-referencing past entries** — last 20 trigger summaries provide loop context.
+- [x] **2.4 Soften the Red-day review message** — replaced judgmental denial framing.
+
+Implementation details: [changelog.md](../changelog.md).
+
+---
+
 ## P0 — Correctness & Trust (fix before anything else)
-
-### 0.1 Silent background failure
-
-**Problem:** `record_entry` hands off to `process.py` via `nohup … &`. If the API key is missing, the network is down, or OpenRouter errors, the failure lands only in `process.log`. The user is told "Entry saved. Processing…" and never learns the synthesis was never written. For a tool whose whole promise is "the mirror is holding your thought safely," this is the worst possible failure mode.
-
-**Proposal:** On failure, `process.py` writes a one-line marker file `${CONFIG_DIR}/logs/failed_<timestamp>` (raw text is already preserved in `raw/`, so nothing is lost). Add a `--status` command (~15 lines of Bash) that prints one calm line: how many entries are processed, pending, or need a retry. Also have `record_entry` check for failure markers at startup and mention them once, gently: `"1 earlier entry is waiting to be re-mirrored. Run: shadow-mirror --retry"`. No red text, no alarm.
-
-**Effort:** Small. **Fog Test:** passes — status is one command, zero flags.
-
-### 0.2 No retry path for failed syntheses
-
-**Problem:** Raw text survives a failure, but there is no way to reprocess it short of manually invoking the venv Python with the right arguments — impossible under fog.
-
-**Proposal:** `shadow-mirror --retry` loops over `failed_*` markers and re-launches `process.py` for each (background, same as entry). Spoons level can be re-read from `entries.csv` or default to "Yellow". ~10 lines.
-
-**Effort:** Small.
 
 ### 0.3 Dead `readlink` fallback / macOS breakage
 
@@ -62,14 +58,6 @@ Symlink resolution is only needed if the binary is symlinked into `PATH`; if so,
 
 **Effort:** Small.
 
-### 0.6 No timeout on the API call
-
-**Problem:** `client.chat.completions.create(...)` has no timeout. A hung connection leaves a zombie `nohup` process and an entry stuck in limbo forever.
-
-**Proposal:** `client = OpenAI(..., timeout=120, max_retries=2)`. One line; the OpenAI SDK handles the rest. Combined with 0.1, a timeout becomes a visible, retryable failure.
-
-**Effort:** Trivial.
-
 ### 0.7 Fragile `TRIGGER_SUMMARY:` parsing
 
 **Problem:** The trigger summary is extracted by scanning for a magic prefix the LLM is merely *asked* to emit. Weaker/local models routinely bold it, prefix it, or omit it — silently degrading `entries.csv` (every row becomes "Transcription processed.").
@@ -81,25 +69,7 @@ Symlink resolution is only needed if the binary is symlinked into `PATH`; if so,
 
 ---
 
-## P1 — The Missing Core Feature: Pattern Recognition
-
-### 1.1 Cross-referencing past entries ("psychological loops")
-
-**Problem:** README Pillar 2 promises: *"Cross-references past entries to identify psychological loops."* This is not implemented anywhere. Each synthesis is generated in isolation; `--review` is manual fzf search. This is the single biggest gap between what the docs claim and what the code does — and it's also the feature that makes the tool genuinely interesting to AI professionals (longitudinal memory in a flat-file system, no vector DB).
-
-**Proposal (lazy, high leverage):** `entries.csv` already stores a trigger summary per entry. Before calling the LLM, `process.py` reads the last N (say 20) rows and appends them to the system prompt:
-
-```
-Recent trigger history (for loop detection only):
-2026-07-02 (Yellow): fear of being replaced at work
-2026-07-05 (Red): resentment toward partner's ease
-...
-If the current entry rhymes with a past trigger, name the loop gently in the Synthesis section.
-```
-
-~10 lines of Python, zero new dependencies, zero new storage. The LLM does the pattern matching — that's what it's good at, and the context cost of 20 five-word summaries is negligible.
-
-**Effort:** Small. **Payoff:** the tool's flagship claim becomes true.
+## P1 — Pattern Recognition Follow-up
 
 ### 1.2 Loop surfacing on Green days
 
@@ -142,14 +112,6 @@ This is what makes the project legible and installable for AI professionals. Rig
 **Proposal:** No new code needed, only configuration: the OpenAI client already accepts a custom `base_url`. Add `OPENROUTER_BASE_URL` (default `https://openrouter.ai/api/v1`) to the env handling — pointing it at `http://localhost:11434/v1` with `OPENROUTER_MODEL=llama3.1` makes it fully local. Document it as a first-class "Privacy Mode" section in the README. ~3 lines of code, big trust signal.
 
 **Effort:** Trivial. **Payoff:** the single strongest credibility feature for this audience.
-
-### 2.4 Soften the Red-day review message
-
-**Problem:** `"🛑 Access Denied: Rest is required today."` violates the project's own Zero Judgment rule — a stop-sign emoji and the word "Denied" is exactly the red-alert framing CLAUDE.md bans.
-
-**Proposal:** `"🪞 The mirror is holding everything safely. It will be here when you're rested."` Same gate, zero judgment.
-
-**Effort:** Trivial.
 
 ### 2.5 Shellcheck + one smoke test
 
@@ -216,9 +178,9 @@ Embeddings + local vector index. **Deliberately deferred:** fzf full-text search
 
 ## Suggested execution order
 
-1. **P0 batch** (0.1–0.7): one sitting, all small. Makes the tool trustworthy.
-2. **1.1** loop-aware prompting: the flagship promise, ~10 lines.
-3. **P2 batch** (2.1–2.7): makes it installable and credible. `install.sh` + privacy mode (2.3) are the highest-leverage items for the AI-professional audience.
-4. Dogfood two weeks, then decide on P3 from real usage — per ROADMAP.md's own rule: the timeline is a framework, not a deadline.
+1. Dogfood the completed trust and loop-aware changes.
+2. **Remaining P0 batch** (0.3, 0.4, 0.5, 0.7): a focused second sitting.
+3. Reassess **1.2** after observing whether loop-aware syntheses already surface enough value.
+4. Add P2 adoption work only when there is a real publishing decision; dogfood before deciding on P3.
 
 _"I didn't choose this. I chose to keep creating anyway."_
